@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+  <title>Parthenon WebAR Mobile Viewer</title>
+  
+  <!-- A-Frame and AR.js (completely free and open-source WebAR stack) -->
+  <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.js"></script>
+  
+  <!-- Tailwind CSS for mobile HUD UI -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            amber: {
+              450: '#ffb900'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    html, body {
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      background: transparent !important;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    #arjs-video, video {
+      object-fit: cover !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      z-index: -2 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    .a-canvas, canvas {
+      object-fit: cover !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      z-index: -1 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    .a-enter-vr, .a-enter-ar {
+      display: none !important;
+    }
+    /* Simple dynamic light pulse for scanner visual effect */
+    @keyframes scan {
+      0% { transform: translateY(-10%); opacity: 0.3; }
+      50% { opacity: 0.8; }
+      100% { transform: translateY(110%); opacity: 0.3; }
+    }
+    .scanner-line {
+      animation: scan 3s infinite linear;
+    }
+  </style>
+</head>
+<body class="bg-black select-none text-slate-100 overflow-hidden">
+
+  <!-- Sketchfab Interactive 3D/AR Simulation Viewport -->
+  <div id="sketchfab-simulation-container" class="fixed inset-0 z-10 transition-all duration-500 opacity-0 pointer-events-none bg-[#090d16]">
+    <iframe id="sketchfab-simulation-iframe" class="w-full h-full border-none" allow="autoplay; fullscreen; xr-spatial-tracking" xr-spatial-tracking execution-while-out-of-viewport execution-while-not-rendered></iframe>
+    <!-- Elegant indicator -->
+    <div class="absolute top-20 left-4 right-4 bg-slate-950/90 border-2 border-amber-450/40 p-3 rounded-sm shadow-2xl pointer-events-none">
+      <div class="flex items-center gap-2">
+        <span class="text-sm">🤖</span>
+        <div>
+          <span id="sketchfab-sim-indicator-text" class="font-mono text-[10px] font-black text-amber-450 uppercase tracking-wider block">MODE SIMULASI AKTIF</span>
+          <p id="sketchfab-sim-indicator-desc" class="text-[10px] text-slate-300 font-sans leading-relaxed">Menampilkan 3D Model Sketchfab interaktif (Kamera dibypass)</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scan Target Alignment Assist -->
+  <div id="target-overlay" class="fixed inset-0 flex items-center justify-center pointer-events-none z-10 transition-opacity duration-500">
+    <div class="border-4 border-dashed border-amber-450/40 w-64 h-64 rounded-xl flex flex-col items-center justify-between p-4 relative">
+      <div class="absolute -top-3 bg-amber-450 text-slate-950 font-mono text-[10px] font-black uppercase px-2 py-0.5 rounded shadow">
+        ALIGN HIRO MARKER HERE
+      </div>
+      <div class="scanner-line absolute left-0 right-0 h-1 bg-amber-450 shadow-[0_0_15px_#ffb900] rounded opacity-60"></div>
+      <div></div>
+      <p class="text-[10px] font-mono text-center text-amber-450/80 bg-slate-950/80 px-2 py-1 rounded">
+        Arahkan kamera ke pola kotak HIRO
+      </p>
+    </div>
+  </div>
+
+  <!-- Main Mobile HUD Overlay -->
+  <div class="fixed inset-x-0 top-0 p-4 flex flex-col gap-2 z-20 pointer-events-none">
+    <div class="flex justify-between items-center w-full">
+      <div class="bg-slate-950/90 border-2 border-slate-800 p-2.5 rounded-sm shadow-xl flex items-center gap-3 pointer-events-auto max-w-[70%]">
+        <div class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></div>
+        <div>
+          <h1 class="font-mono text-[10px] font-black uppercase tracking-wider text-amber-450">Parthenon WebAR</h1>
+          <p id="hud-mode-title" class="text-xs font-black uppercase text-slate-100 truncate">Golden Age Model</p>
+        </div>
+      </div>
+      
+      <!-- Back & Lang Buttons -->
+      <div class="flex gap-1.5 pointer-events-auto">
+        <button id="btn-simulation" onclick="toggleSimulationManual()" class="bg-slate-950/90 border-2 border-slate-800 text-[10px] font-mono font-black uppercase px-2.5 py-1.5 rounded-sm active:scale-95 transition-all text-amber-450 flex items-center gap-1">
+          <span>🎮</span> <span id="btn-simulation-text">SIMULASI: OFF</span>
+        </button>
+        <button onclick="toggleLanguage()" class="bg-slate-950/90 border-2 border-slate-800 text-[10px] font-mono font-black uppercase px-2.5 py-1.5 rounded-sm active:scale-95 transition-all text-amber-450">
+          <span id="btn-lang-text">ID</span>
+        </button>
+        <button onclick="goBack()" class="bg-slate-950/90 border-2 border-slate-800 text-[10px] font-mono font-black uppercase px-3 py-1.5 rounded-sm active:scale-95 transition-all hover:bg-rose-950/40">
+          ← Back
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Interactive HUD (Mode switcher & Facts ticker) -->
+  <div class="fixed inset-x-0 bottom-0 p-4 flex flex-col gap-3 z-20 pointer-events-none">
+    
+    <!-- Toast info if marker not detected yet -->
+    <div id="detection-tip" class="self-center bg-slate-950/90 border border-slate-800 text-[11px] font-sans px-3 py-2 rounded-full text-slate-300 flex items-center gap-2 shadow-lg max-w-[90%]">
+      <span class="text-amber-450">💡</span>
+      <span id="tip-text">TIPS: Letakkan HP sejajar dengan marker HIRO di monitor laptop Anda</span>
+    </div>
+
+    <!-- Mode Selector Cards -->
+    <div class="grid grid-cols-2 gap-3 pointer-events-auto">
+      
+      <!-- Golden Age Card -->
+      <button id="mode-rebuilt-btn" onclick="selectMode('rebuilt')" class="border-2 p-3 bg-slate-950/95 text-left rounded-sm transition-all duration-300 border-amber-450/90 shadow-[0_4px_20px_rgba(255,185,0,0.15)]">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs">🏛️</span>
+          <span id="mode-rebuilt-label" class="font-mono text-[9px] font-black uppercase tracking-wider text-amber-450">Masa Kejayaan</span>
+        </div>
+        <h3 id="mode-rebuilt-title" class="text-xs font-black uppercase text-white leading-none">GOLDEN AGE</h3>
+      </button>
+
+      <!-- Ruins Card -->
+      <button id="mode-ruins-btn" onclick="selectMode('ruins')" class="border-2 p-3 bg-slate-950/60 text-left rounded-sm transition-all duration-300 border-slate-800">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs">⏳</span>
+          <span id="mode-ruins-label" class="font-mono text-[9px] font-black uppercase tracking-wider text-slate-400">Reruntuhan</span>
+        </div>
+        <h3 id="mode-ruins-title" class="text-xs font-black uppercase text-slate-400 leading-none">PRESENT RUINS</h3>
+      </button>
+
+    </div>
+
+    <!-- Live Fact Card -->
+    <div class="bg-slate-950/95 border-2 border-slate-800 p-3 rounded-sm shadow-2xl pointer-events-auto">
+      <div class="flex justify-between items-center mb-1">
+        <span id="fact-label" class="font-mono text-[9px] font-black uppercase tracking-widest text-amber-450">KRONOLOGI SEJARAH</span>
+        <button onclick="nextFact()" class="text-[9px] font-mono font-black text-amber-450/80 hover:text-amber-450 uppercase tracking-widest">
+          Next Fact →
+        </button>
+      </div>
+      <p id="fact-content" class="text-xs text-slate-200 leading-relaxed font-sans min-h-[36px]">
+        Kuil ini dibangun pada 447 SM sebagai persembahan utama bagi Dewi Athena Parthenos, pelindung kota Athena.
+      </p>
+    </div>
+
+  </div>
+
+  <!-- A-Frame Augmented Reality Scene -->
+  <a-scene 
+    embedded 
+    arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+    renderer="logarithmicDepthBuffer: true; precision: medium; antialias: true;"
+    vr-mode-ui="enabled: false"
+  >
+    <!-- Assets for materials and textures -->
+    <a-assets>
+      <!-- We use standard built-in gradient and materials to maintain speed & cross-platform robustness -->
+    </a-assets>
+
+    <!-- HIRO Marker anchor -->
+    <a-marker id="hiro-marker" preset="hiro">
+      
+      <!-- Container node with simple idle spin animation to make it dynamic -->
+      <a-entity id="parthenon-temple" position="0 0.1 0" scale="1.4 1.4 1.4" rotation="0 0 0">
+        
+        <!-- Base Platform of the Parthenon (Stylobate) -->
+        <a-box position="0 -0.05 0" width="1.8" height="0.04" depth="2.6" color="#94a3b8" material="roughness: 0.9;"></a-box>
+        <a-box position="0 -0.01 0" width="1.6" height="0.04" depth="2.4" color="#cbd5e1" material="roughness: 0.85;"></a-box>
+        <a-box position="0 0.03 0" width="1.4" height="0.04" depth="2.2" color="#e2e8f0" material="roughness: 0.8;"></a-box>
+
+        <!-- Inner Cella (Sanctuary Room walls) -->
+        <a-entity id="cella-room">
+          <!-- Back Wall -->
+          <a-box id="cella-wall" position="0 0.28 0" width="0.8" height="0.48" depth="1.3" color="#e2e8f0" material="roughness: 0.9;"></a-box>
+        </a-entity>
+
+        <!-- Golden Statue of Athena Parthenos (Exclusive in Golden Age) -->
+        <a-entity id="athena-statue">
+          <!-- Base pedestal -->
+          <a-box position="0 0.1 0.1" width="0.2" height="0.1" depth="0.2" color="#1e293b"></a-box>
+          <!-- Golden Figure of Athena -->
+          <a-box position="0 0.3 0.1" width="0.1" height="0.32" depth="0.1" color="#fbbf24" material="metalness: 0.8; roughness: 0.2;">
+            <a-animation attribute="rotation" dur="5000" to="0 360 0" repeat="indefinite" easing="linear"></a-animation>
+          </a-box>
+          <!-- Shiny shield -->
+          <a-cylinder position="-0.07 0.28 0.13" rotation="0 0 90" radius="0.08" height="0.01" color="#b45309" material="metalness: 0.9; roughness: 0.1;"></a-cylinder>
+          <!-- Tiny victory Nike figure on her hand -->
+          <a-box position="0.07 0.34 0.12" width="0.03" height="0.06" depth="0.03" color="#fef08a" material="metalness: 0.7;"></a-box>
+        </a-entity>
+
+        <!-- columns arrangement -->
+        <a-entity id="columns-group"></a-entity>
+
+        <!-- Architrave and Roof structure (Golden Age only) -->
+        <a-entity id="roof-structure" position="0 0.54 0">
+          <!-- Architrave beam -->
+          <a-box position="0 0.05 0" width="1.42" height="0.08" depth="2.22" color="#e2e8f0" material="roughness: 0.8;"></a-box>
+          <!-- Metopes/Frieze band -->
+          <a-box position="0 0.11 0" width="1.41" height="0.05" depth="2.21" color="#b45309" material="roughness: 0.75;">
+            <!-- Blue accent strips behind reliefs -->
+            <a-box position="0 0 -1.11" width="1.35" height="0.03" depth="0.01" color="#1e3a8a"></a-box>
+            <a-box position="0 0 1.11" width="1.35" height="0.03" depth="0.01" color="#1e3a8a"></a-box>
+          </a-box>
+
+          <!-- Front Triangular Pediment (East) -->
+          <a-entity position="0 0.22 -1.1">
+            <!-- Triangular facade backplate -->
+            <a-triangle vertex-a="0 0.22 0" vertex-b="-0.71 0 0" vertex-c="0.71 0 0" color="#1e3a8a" material="roughness: 0.8;"></a-triangle>
+            <!-- Left trim -->
+            <a-box position="-0.37 0.12 0" rotation="0 0 -17.2" width="0.76" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            <!-- Right trim -->
+            <a-box position="0.37 0.12 0" rotation="0 0 17.2" width="0.76" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            <!-- Base trim -->
+            <a-box position="0 0 0" width="1.43" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            
+            <!-- Miniature sculptures inside pediment -->
+            <a-sphere position="0 0.04 0.01" radius="0.04" color="#f1f5f9"></a-sphere>
+            <a-box position="-0.15 0.03 0.01" width="0.05" height="0.08" depth="0.05" color="#cbd5e1" rotation="0 0 15"></a-box>
+            <a-box position="0.15 0.03 0.01" width="0.05" height="0.08" depth="0.05" color="#cbd5e1" rotation="0 0 -15"></a-box>
+            <a-sphere position="-0.35 0.02 0.01" radius="0.03" color="#cbd5e1"></a-sphere>
+            <a-sphere position="0.35 0.02 0.01" radius="0.03" color="#cbd5e1"></a-sphere>
+          </a-entity>
+
+          <!-- Back Triangular Pediment (West) -->
+          <a-entity position="0 0.22 1.1">
+            <a-triangle vertex-a="0 0.22 0" vertex-b="-0.71 0 0" vertex-c="0.71 0 0" color="#1e3a8a" material="roughness: 0.8;"></a-triangle>
+            <a-box position="-0.37 0.12 0" rotation="0 0 -17.2" width="0.76" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            <a-box position="0.37 0.12 0" rotation="0 0 17.2" width="0.76" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            <a-box position="0 0 0" width="1.43" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+          </a-entity>
+
+          <!-- Slanted Main Roof Sheets (Golden tile sheets) -->
+          <!-- Left Slanted Roof -->
+          <a-box position="-0.37 0.12 0" rotation="17.2 0 0" width="0.76" height="0.02" depth="2.24" color="#b45309" material="roughness: 0.6;"></a-box>
+          <!-- Right Slanted Roof -->
+          <a-box position="0.37 0.12 0" rotation="-17.2 0 0" width="0.76" height="0.02" depth="2.24" color="#b45309" material="roughness: 0.6;"></a-box>
+          
+          <!-- Roof decorative golden trim -->
+          <a-box position="0 0.23 0" width="0.03" height="0.03" depth="2.24" color="#fbbf24" material="metalness: 0.7;"></a-box>
+        </a-entity>
+
+      </a-entity>
+    </a-marker>
+
+    <!-- Setup natural lighting -->
+    <a-entity light="type: ambient; color: #fff; intensity: 0.7;"></a-entity>
+    <a-entity light="type: directional; color: #fff; intensity: 0.9;" position="-1 4 2"></a-entity>
+
+    <a-entity camera></a-entity>
+  </a-scene>
+
+  <!-- Interactive Logic to support Switching and Live Data update -->
+  <script>
+    let currentMode = "rebuilt";
+    let currentLang = "id";
+    let activeFactIndex = 0;
+    let isSimulationMode = false;
+
+    // Intercept getUserMedia to detect camera failures/denials instantly
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getUserMedia = function(constraints) {
+          return originalGetUserMedia(constraints).catch(error => {
+            console.warn("Camera access failed via navigator.mediaDevices.getUserMedia:", error);
+            showCameraErrorDialog(error);
+            throw error;
+          });
+        };
+      }
+    } catch (e) {
+      console.warn("Unable to intercept getUserMedia:", e);
+    }
+
+    const languages = {
+      id: {
+        tipText: "💡 TIPS: Hadapkan kamera HP ke marker HIRO di monitor laptop Anda",
+        detectionTip: "Letakkan HP sejajar dengan pola HIRO untuk melacak",
+        btnLang: "ID",
+        modeRebuiltLabel: "Masa Kejayaan",
+        modeRuinsLabel: "Reruntuhan",
+        hudRebuiltTitle: "Golden Age Model",
+        hudRuinsTitle: "Ruins Onsite",
+        factLabel: "ARSIP KRONOLOGI SEJARAH",
+        backBtn: "← Kembali",
+        btnSimOn: "SIMULASI: AKTIF",
+        btnSimOff: "SIMULASI: MATI",
+        facts: [
+          "Kuil ini dibangun pada 447 SM sebagai rumah bagi patung Athena Parthenos setinggi 12 meter bersepuh emas.",
+          "Warna cerah biru kuil, merah, dan emas menghiasi ornamen friz atas untuk membantu mendongengkan kisah pahlawan mitologi.",
+          "Pada tahun 1687, sebuah bom meriam dari tentara Venesia meledakkan pasokan bubuk mesiu Utsmaniyah di dalam cella kuil.",
+          "A-Frame & AR.js merupakan teknologi open-source gratis tanpa lisensi berbayar untuk visualisasi interaktif.",
+          "Marker HIRO yang Anda scan di monitor laptop menahan orientasi 3D agar objek nampak diam di atas kertas."
+        ]
+      },
+      en: {
+        tipText: "💡 TIPS: Point your mobile camera directly at the HIRO marker on your desktop",
+        detectionTip: "Keep phone steady and align with the HIRO marker pattern",
+        btnLang: "EN",
+        modeRebuiltLabel: "Golden Age",
+        modeRuinsLabel: "Ruins",
+        hudRebuiltTitle: "Golden Age Model",
+        hudRuinsTitle: "Ruins Onsite",
+        factLabel: "HISTORIC CHRONICLE",
+        backBtn: "← Back",
+        btnSimOn: "SIMULATION: ON",
+        btnSimOff: "SIMULATION: OFF",
+        facts: [
+          "Construction started in 447 BC to house the majestic 12-meter high gold-and-ivory statue of Athena Parthenos.",
+          "Vibrant blue, deep red, and gold pigments originally painted the high reliefs to narrate heroic sagas vividly.",
+          "In 1687, a Venetian mortar shell triggered a catastrophic gunpowder explosion stored inside the temple cella.",
+          "A-Frame & AR.js provide completely free, license-less open-source mobile AR tracking across modern browsers.",
+          "The HIRO marker on your screen serves as the physical spatial anchor keeping the 3D temple locked on your desk."
+        ]
+      }
+    };
+
+    // Setup active marker tracking events
+    const marker = document.getElementById("hiro-marker");
+    const tipEl = document.getElementById("detection-tip");
+    
+    marker.addEventListener("markerFound", () => {
+      if (isSimulationMode) return;
+      tipEl.classList.add("bg-emerald-950/90", "border-emerald-500/50");
+      tipEl.classList.remove("bg-slate-950/90", "border-slate-800");
+      document.getElementById("tip-text").innerText = currentLang === "id" 
+        ? "✨ BERHASIL: Parthenon terdeteksi di atas marker!" 
+        : "✨ SUCCESS: Parthenon tracked on marker!";
+      
+      // Hide target overlay once successfully locked to clear screen
+      document.getElementById("target-overlay").style.opacity = "0";
+    });
+
+    marker.addEventListener("markerLost", () => {
+      if (isSimulationMode) return;
+      tipEl.classList.remove("bg-emerald-950/90", "border-emerald-500/50");
+      tipEl.classList.add("bg-slate-950/90", "border-slate-800");
+      updateTipText();
+      document.getElementById("target-overlay").style.opacity = "1";
+    });
+
+    function updateTipText() {
+      const dict = languages[currentLang];
+      document.getElementById("tip-text").innerText = dict.tipText;
+    }
+
+    // Spawn 3D Columns dynamically to keep code clean and fast
+    const colHeight = 0.44;
+    const colRadius = 0.024;
+
+    function renderColumns() {
+      const group = document.getElementById("columns-group");
+      group.innerHTML = ""; // Clear existing
+
+      const isRuins = currentMode === "ruins";
+      const cols = [];
+
+      // Generate column coordinates grid
+      // Front row (Z = -0.96)
+      for (let x = -0.58; x <= 0.58; x += 0.165) {
+        // Ruins has a high chance of missing or broken columns
+        cols.push({ x, z: -0.96, broken: isRuins && Math.random() > 0.45, fallen: isRuins && Math.random() > 0.75 });
+      }
+      // Back row (Z = 0.96)
+      for (let x = -0.58; x <= 0.58; x += 0.165) {
+        cols.push({ x, z: 0.96, broken: isRuins && Math.random() > 0.45, fallen: isRuins && Math.random() > 0.75 });
+      }
+      // Left row perimeter (X = -0.58, excluding corners)
+      for (let z = -0.8; z <= 0.8; z += 0.18) {
+        cols.push({ x: -0.58, z, broken: isRuins && Math.random() > 0.5, fallen: isRuins && Math.random() > 0.8 });
+      }
+      // Right row perimeter (X = 0.58, excluding corners)
+      for (let z = -0.8; z <= 0.8; z += 0.18) {
+        cols.push({ x: 0.58, z, broken: isRuins && Math.random() > 0.5, fallen: isRuins && Math.random() > 0.8 });
+      }
+
+      cols.forEach((col, index) => {
+        const el = document.createElement("a-cylinder");
+        el.setAttribute("radius", colRadius);
+        
+        if (col.fallen) {
+          // Fallen/collapsed columns scattered on base
+          el.setAttribute("height", colHeight);
+          el.setAttribute("position", `${col.x + (Math.random() * 0.15 - 0.075)} 0.05 ${col.z + (Math.random() * 0.15 - 0.075)}`);
+          el.setAttribute("rotation", "90 45 0");
+        } else if (col.broken) {
+          // Half-standing broken columns
+          const brokenMultiplier = 0.15 + Math.random() * 0.45;
+          const currentH = colHeight * brokenMultiplier;
+          el.setAttribute("height", currentH);
+          el.setAttribute("position", `${col.x} ${currentH / 2 + 0.03} ${col.z}`);
+          if (Math.random() > 0.6) {
+            el.setAttribute("rotation", `${Math.random() * 10 - 5} 0 ${Math.random() * 10 - 5}`);
+          }
+        } else {
+          // Healthy upright columns
+          el.setAttribute("height", colHeight);
+          el.setAttribute("position", `${col.x} ${colHeight / 2 + 0.03} ${col.z}`);
+        }
+
+        // Color and material styling
+        el.setAttribute("color", isRuins ? "#b4b8c2" : "#f1f5f9");
+        el.setAttribute("material", "roughness: 0.85; metalness: 0.1;");
+        
+        group.appendChild(el);
+      });
+    }
+
+    const sketchfabUrls = {
+      rebuilt: "https://sketchfab.com/models/4552d90409924583b1fadfc9953134cb/embed?autostart=1&preload=1&ui_controls=1&ui_infos=0&ui_watermark=0",
+      ruins: "https://sketchfab.com/models/0eca9f090252466aac691d0e5d449323/embed?autostart=1&preload=1&ui_controls=1&ui_infos=0&ui_watermark=0"
+    };
+
+    // Switch active Mode
+    function selectMode(mode) {
+      currentMode = mode;
+      
+      const rebuiltBtn = document.getElementById("mode-rebuilt-btn");
+      const ruinsBtn = document.getElementById("mode-ruins-btn");
+      const athena = document.getElementById("athena-statue");
+      const roof = document.getElementById("roof-structure");
+      const cellaWall = document.getElementById("cella-wall");
+      const hudTitle = document.getElementById("hud-mode-title");
+      
+      const dict = languages[currentLang];
+
+      if (mode === "rebuilt") {
+        // UI Button styling
+        rebuiltBtn.className = "border-2 p-3 bg-slate-950/95 text-left rounded-sm transition-all duration-300 border-amber-450/90 shadow-[0_4px_20px_rgba(255,185,0,0.15)]";
+        ruinsBtn.className = "border-2 p-3 bg-slate-950/60 text-left rounded-sm transition-all duration-300 border-slate-800";
+        
+        // 3D Visual adjustments
+        if (athena) athena.setAttribute("visible", "true");
+        if (roof) roof.setAttribute("visible", "true");
+        if (cellaWall) {
+          cellaWall.setAttribute("color", "#e2e8f0");
+          cellaWall.setAttribute("scale", "1 1 1");
+          cellaWall.setAttribute("position", "0 0.28 0");
+        }
+
+        hudTitle.innerText = dict.hudRebuiltTitle;
+        hudTitle.className = "text-xs font-black uppercase text-slate-100 truncate";
+      } else {
+        // UI Button styling
+        ruinsBtn.className = "border-2 p-3 bg-slate-950/95 text-left rounded-sm transition-all duration-300 border-amber-450/90 shadow-[0_4px_20px_rgba(255,185,0,0.15)]";
+        rebuiltBtn.className = "border-2 p-3 bg-slate-950/60 text-left rounded-sm transition-all duration-300 border-slate-800";
+        
+        // 3D Visual adjustments for ruins
+        if (athena) athena.setAttribute("visible", "false");
+        if (roof) roof.setAttribute("visible", "false");
+        if (cellaWall) {
+          cellaWall.setAttribute("color", "#94a3b8");
+          cellaWall.setAttribute("scale", "0.95 0.5 0.8");
+          cellaWall.setAttribute("position", "0 0.15 0.1");
+        }
+
+        hudTitle.innerText = dict.hudRuinsTitle;
+        hudTitle.className = "text-xs font-black uppercase text-rose-400 truncate";
+      }
+
+      // Sync Sketchfab Iframe when in Simulation Mode
+      if (isSimulationMode) {
+        const iframe = document.getElementById("sketchfab-simulation-iframe");
+        if (iframe) {
+          const targetUrl = sketchfabUrls[mode];
+          if (iframe.src !== targetUrl) {
+            iframe.src = targetUrl;
+          }
+        }
+      }
+
+      renderColumns();
+    }
+
+    // Toggle language (Indonesian <=> English)
+    function toggleLanguage() {
+      currentLang = currentLang === "id" ? "en" : "id";
+      
+      const dict = languages[currentLang];
+      
+      document.getElementById("btn-lang-text").innerText = dict.btnLang;
+      document.getElementById("mode-rebuilt-label").innerText = dict.modeRebuiltLabel;
+      document.getElementById("mode-ruins-label").innerText = dict.modeRuinsLabel;
+      document.getElementById("fact-label").innerText = dict.factLabel;
+      
+      // Update buttons translation
+      updateTipText();
+      
+      // Keep mode titles translated
+      if (currentMode === "rebuilt") {
+        document.getElementById("hud-mode-title").innerText = dict.hudRebuiltTitle;
+      } else {
+        document.getElementById("hud-mode-title").innerText = dict.hudRuinsTitle;
+      }
+
+      // Update simulation button text
+      const btnSimText = document.getElementById("btn-simulation-text");
+      if (btnSimText) {
+        btnSimText.innerText = isSimulationMode ? dict.btnSimOn : dict.btnSimOff;
+      }
+
+      // Update simulation indicators in Sketchfab simulation container
+      const simIndText = document.getElementById("sketchfab-sim-indicator-text");
+      const simIndDesc = document.getElementById("sketchfab-sim-indicator-desc");
+      if (simIndText && simIndDesc) {
+        if (currentLang === "id") {
+          simIndText.innerText = "MODE SIMULASI AKTIF";
+          simIndDesc.innerText = "Menampilkan 3D Model Sketchfab interaktif (Kamera dibypass)";
+        } else {
+          simIndText.innerText = "SIMULATION MODE ACTIVE";
+          simIndDesc.innerText = "Displaying interactive 3D Sketchfab Model (Camera bypassed)";
+        }
+      }
+
+      // Re-render facts content
+      activeFactIndex = 0;
+      document.getElementById("fact-content").innerText = dict.facts[activeFactIndex];
+    }
+
+    function nextFact() {
+      const dict = languages[currentLang];
+      activeFactIndex = (activeFactIndex + 1) % dict.facts.length;
+      
+      // Smooth fade transition
+      const contentEl = document.getElementById("fact-content");
+      contentEl.style.opacity = "0";
+      setTimeout(() => {
+        contentEl.innerText = dict.facts[activeFactIndex];
+        contentEl.style.opacity = "1";
+      }, 150);
+    }
+
+    function goBack() {
+      window.location.href = window.location.origin;
+    }
+
+    // Periodic style cleaner to remove any black bars or wrong offsets injected by AR.js
+    setInterval(() => {
+      try {
+        // Force body and html to stay fullscreen
+        document.documentElement.style.setProperty("width", "100%", "important");
+        document.documentElement.style.setProperty("height", "100%", "important");
+        document.documentElement.style.setProperty("margin", "0", "important");
+        document.documentElement.style.setProperty("padding", "0", "important");
+        document.documentElement.style.setProperty("overflow", "hidden", "important");
+        
+        document.body.style.setProperty("width", "100%", "important");
+        document.body.style.setProperty("height", "100%", "important");
+        document.body.style.setProperty("margin", "0", "important");
+        document.body.style.setProperty("padding", "0", "important");
+        document.body.style.setProperty("overflow", "hidden", "important");
+
+        // Force video to stay fullscreen
+        const videos = document.querySelectorAll("video, #arjs-video");
+        videos.forEach(v => {
+          v.style.setProperty("width", "100vw", "important");
+          v.style.setProperty("height", "100vh", "important");
+          v.style.setProperty("top", "0px", "important");
+          v.style.setProperty("left", "0px", "important");
+          v.style.setProperty("margin", "0px", "important");
+          v.style.setProperty("object-fit", "cover", "important");
+        });
+
+        // Force canvas to stay fullscreen
+        const canvases = document.querySelectorAll(".a-canvas, canvas");
+        canvases.forEach(c => {
+          c.style.setProperty("width", "100vw", "important");
+          c.style.setProperty("height", "100vh", "important");
+          c.style.setProperty("top", "0px", "important");
+          c.style.setProperty("left", "0px", "important");
+          c.style.setProperty("margin", "0px", "important");
+        });
+      } catch (err) {
+        console.warn("Style cleaner error:", err);
+      }
+    }, 250);
+
+    // Toggle Simulation Manual click
+    function toggleSimulationManual() {
+      isSimulationMode = !isSimulationMode;
+      toggleSimulationMode(isSimulationMode);
+    }
+
+    // Dynamically rebuild a clean 3D scene without AR.js to ensure rendering succeeds when camera fails
+    function initSimulationScene() {
+      const mode = currentMode;
+      
+      // Remove any existing scenes
+      const oldScene = document.querySelector("a-scene");
+      if (oldScene) {
+        oldScene.parentNode.removeChild(oldScene);
+      }
+
+      // Create a brand new, clean, non-AR A-Frame scene
+      const newScene = document.createElement("a-scene");
+      newScene.setAttribute("vr-mode-ui", "enabled: false");
+      newScene.setAttribute("renderer", "logarithmicDepthBuffer: true; precision: medium; antialias: true;");
+      newScene.className = "w-full h-full absolute top-0 left-0 z-10";
+
+      // Create standard ambient and directional lighting
+      const light1 = document.createElement("a-entity");
+      light1.setAttribute("light", "type: ambient; color: #ffffff; intensity: 0.8;");
+      newScene.appendChild(light1);
+
+      const light2 = document.createElement("a-entity");
+      light2.setAttribute("light", "type: directional; color: #ffffff; intensity: 1.0;");
+      light2.setAttribute("position", "-1 4 2");
+      newScene.appendChild(light2);
+
+      // Create digital skybox background
+      const sky = document.createElement("a-sky");
+      sky.setAttribute("color", "#0b1224");
+      newScene.appendChild(sky);
+
+      // Create the main temple container
+      const temple = document.createElement("a-entity");
+      temple.setAttribute("id", "parthenon-temple");
+      temple.setAttribute("position", "0 -0.2 0");
+      temple.setAttribute("scale", "1.2 1.2 1.2");
+      temple.setAttribute("rotation", "15 45 0");
+      
+      // Infinite rotating showcase animation
+      temple.setAttribute("animation", "property: rotation; to: 15 405 0; dur: 22000; easing: linear; loop: true; autoplay: true");
+
+      temple.innerHTML = `
+        <!-- Base Platform of the Parthenon (Stylobate) -->
+        <a-box position="0 -0.05 0" width="1.8" height="0.04" depth="2.6" color="#94a3b8" material="roughness: 0.9;"></a-box>
+        <a-box position="0 -0.01 0" width="1.6" height="0.04" depth="2.4" color="#cbd5e1" material="roughness: 0.85;"></a-box>
+        <a-box position="0 0.03 0" width="1.4" height="0.04" depth="2.2" color="#e2e8f0" material="roughness: 0.8;"></a-box>
+
+        <!-- Inner Cella -->
+        <a-entity id="cella-room">
+          <a-box id="cella-wall" position="0 0.28 0" width="0.8" height="0.48" depth="1.3" color="${mode === 'rebuilt' ? '#e2e8f0' : '#b4b8c2'}" material="roughness: 0.9;"></a-box>
+        </a-entity>
+
+        <!-- Golden Statue of Athena Parthenos -->
+        <a-entity id="athena-statue" visible="${mode === 'rebuilt' ? 'true' : 'false'}">
+          <a-box position="0 0.1 0.1" width="0.2" height="0.1" depth="0.2" color="#1e293b"></a-box>
+          <a-box position="0 0.3 0.1" width="0.1" height="0.32" depth="0.1" color="#fbbf24" material="metalness: 0.8; roughness: 0.2;"></a-box>
+          <a-cylinder position="-0.07 0.28 0.13" rotation="0 0 90" radius="0.08" height="0.01" color="#b45309" material="metalness: 0.9; roughness: 0.1;"></a-cylinder>
+          <a-box position="0.07 0.34 0.12" width="0.03" height="0.06" depth="0.03" color="#fef08a" material="metalness: 0.7;"></a-box>
+        </a-entity>
+
+        <!-- Columns arrangement group -->
+        <a-entity id="columns-group"></a-entity>
+
+        <!-- Architrave and Roof structure -->
+        <a-entity id="roof-structure" position="0 0.54 0" visible="${mode === 'rebuilt' ? 'true' : 'false'}">
+          <a-box position="0 0.05 0" width="1.42" height="0.08" depth="2.22" color="#e2e8f0" material="roughness: 0.8;"></a-box>
+          <a-box position="0 0.11 0" width="1.41" height="0.05" depth="2.21" color="#b45309" material="roughness: 0.75;">
+            <a-box position="0 0 -1.11" width="1.35" height="0.03" depth="0.01" color="#1e3a8a"></a-box>
+            <a-box position="0 0 1.11" width="1.35" height="0.03" depth="0.01" color="#1e3a8a"></a-box>
+          </a-box>
+
+          <!-- Front Triangular Pediment (East) -->
+          <a-entity position="0 0.22 -1.1">
+            <a-triangle vertex-a="0 0.22 0" vertex-b="-0.71 0 0" vertex-c="0.71 0 0" color="#1e3a8a" material="roughness: 0.8;"></a-triangle>
+            <a-box position="-0.37 0.12 0" rotation="0 0 -17.2" width="0.76" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            <a-box position="0.37 0.12 0" rotation="0 0 17.2" width="0.76" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            <a-box position="0 0 0" width="1.43" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            <a-sphere position="0 0.04 0.01" radius="0.04" color="#f1f5f9"></a-sphere>
+            <a-box position="-0.15 0.03 0.01" width="0.05" height="0.08" depth="0.05" color="#cbd5e1" rotation="0 0 15"></a-box>
+            <a-box position="0.15 0.03 0.01" width="0.05" height="0.08" depth="0.05" color="#cbd5e1" rotation="0 0 -15"></a-box>
+            <a-sphere position="-0.35 0.02 0.01" radius="0.03" color="#cbd5e1"></a-sphere>
+            <a-sphere position="0.35 0.02 0.01" radius="0.03" color="#cbd5e1"></a-sphere>
+          </a-entity>
+
+          <!-- Back Triangular Pediment (West) -->
+          <a-entity position="0 0.22 1.1">
+            <a-triangle vertex-a="0 0.22 0" vertex-b="-0.71 0 0" vertex-c="0.71 0 0" color="#1e3a8a" material="roughness: 0.8;"></a-triangle>
+            <a-box position="-0.37 0.12 0" rotation="0 0 -17.2" width="0.76" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            <a-box position="0.37 0.12 0" rotation="0 0 17.2" width="0.76" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+            <a-box position="0 0 0" width="1.43" height="0.03" depth="0.04" color="#f8fafc"></a-box>
+          </a-entity>
+
+          <!-- Slanted Main Roof Sheets -->
+          <a-box position="-0.37 0.12 0" rotation="17.2 0 0" width="0.76" height="0.02" depth="2.24" color="#b45309" material="roughness: 0.6;"></a-box>
+          <a-box position="0.37 0.12 0" rotation="-17.2 0 0" width="0.76" height="0.02" depth="2.24" color="#b45309" material="roughness: 0.6;"></a-box>
+          <a-box position="0 0.23 0" width="0.03" height="0.03" depth="2.24" color="#fbbf24" material="metalness: 0.7;"></a-box>
+        </a-entity>
+      `;
+
+      newScene.appendChild(temple);
+
+      // Create interactive Orbit camera setup
+      const camera = document.createElement("a-entity");
+      camera.setAttribute("camera", "fov: 50; near: 0.1; far: 1000;");
+      camera.setAttribute("position", "0 0.8 2.6");
+      camera.setAttribute("look-controls", "enabled: true");
+      newScene.appendChild(camera);
+
+      document.body.appendChild(newScene);
+
+      // Trigger standard column mesh builder
+      setTimeout(() => {
+        renderColumns();
+      }, 50);
+    }
+
+    // Toggle simulation mode 3D repositioning and background setup
+    function toggleSimulationMode(active) {
+      const targetOverlay = document.getElementById("target-overlay");
+      const detectionTip = document.getElementById("detection-tip");
+      const tipText = document.getElementById("tip-text");
+      const btnSimText = document.getElementById("btn-simulation-text");
+      const btnSim = document.getElementById("btn-simulation");
+      
+      const dict = languages[currentLang];
+
+      if (active) {
+        isSimulationMode = true;
+        
+        // Hide local scene and pause its elements to preserve CPU/GPU
+        const scene = document.querySelector("a-scene");
+        if (scene) {
+          scene.style.display = "none";
+          if (typeof scene.pause === "function") {
+            scene.pause();
+          }
+        }
+
+        // Show Sketchfab Simulation iframe container
+        const sfContainer = document.getElementById("sketchfab-simulation-container");
+        const sfIframe = document.getElementById("sketchfab-simulation-iframe");
+        if (sfContainer && sfIframe) {
+          sfContainer.classList.remove("opacity-0", "pointer-events-none");
+          sfContainer.classList.add("opacity-100", "pointer-events-auto");
+          sfIframe.src = sketchfabUrls[currentMode];
+        }
+
+        // Set body background for high-contrast dark space
+        document.body.style.setProperty("background-color", "#090d16", "important");
+
+        // Hide layout placement targets
+        if (targetOverlay) targetOverlay.style.opacity = "0";
+        
+        // Update tip HUD to note active simulation status
+        if (detectionTip) {
+          detectionTip.classList.add("bg-amber-950/90", "border-amber-400/50");
+          detectionTip.classList.remove("bg-emerald-950/90", "border-emerald-500/50", "bg-slate-950/90", "border-slate-800");
+        }
+        if (tipText) {
+          tipText.innerText = currentLang === "id" 
+            ? "🤖 MODE SIMULASI: Kamera dibypass. Menampilkan model 3D Sketchfab!"
+            : "🤖 SIMULATION MODE: Camera bypassed. Displaying interactive Sketchfab 3D model!";
+        }
+
+        // Hide camera video to clean up the workspace
+        const video = document.getElementById("arjs-video") || document.querySelector("video");
+        if (video) {
+          video.style.opacity = "0";
+          video.style.pointerEvents = "none";
+        }
+
+        if (btnSimText) btnSimText.innerText = dict.btnSimOn;
+        if (btnSim) {
+          btnSim.classList.add("border-amber-400", "bg-amber-450/20");
+          btnSim.classList.remove("border-slate-800");
+        }
+      } else {
+        // Disabling simulation mode - reload to safely restore web camera feeds
+        window.location.reload();
+      }
+    }
+
+    // Modal display control
+    function showCameraErrorDialog(error) {
+      const modal = document.getElementById("camera-error-modal");
+      if (modal) {
+        modal.classList.remove("pointer-events-none", "opacity-0");
+        modal.classList.add("opacity-100");
+      }
+    }
+
+    // Hide error dialog
+    function hideCameraErrorDialog() {
+      const modal = document.getElementById("camera-error-modal");
+      if (modal) {
+        modal.classList.add("pointer-events-none", "opacity-0");
+        modal.classList.remove("opacity-100");
+      }
+    }
+
+    function activateSimulationBypass() {
+      hideCameraErrorDialog();
+      toggleSimulationMode(true);
+    }
+
+    // Set a safety timeout to detect if camera fails or is blocked
+    setTimeout(() => {
+      if (isSimulationMode) return;
+      const video = document.getElementById("arjs-video") || document.querySelector("video");
+      const hasActiveStream = video && video.srcObject && video.srcObject.getVideoTracks().length > 0;
+      
+      if (!hasActiveStream || !video || video.paused || video.readyState < 2) {
+        console.warn("No active camera stream detected after timeout. Showing simulation fallback dialog.");
+        showCameraErrorDialog(new Error("Timeout waiting for active camera stream"));
+      }
+    }, 4500);
+
+    // Read initial URL params (allow direct mode link like ?mode=ruins)
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramMode = urlParams.get("mode");
+    const paramLang = urlParams.get("lang");
+    
+    if (paramLang === "en") {
+      toggleLanguage();
+    }
+    if (paramMode === "ruins") {
+      selectMode("ruins");
+    } else {
+      selectMode("rebuilt");
+    }
+  </script>
+
+  <!-- Camera Error Fallback Dialog Modal -->
+  <div id="camera-error-modal" class="fixed inset-0 bg-slate-950/90 flex items-center justify-center p-4 z-50 transition-opacity duration-300 pointer-events-none opacity-0">
+    <div class="bg-[#112240] border-4 border-amber-450 max-w-md w-full p-6 shadow-[0_10px_40px_rgba(255,185,0,0.35)] rounded-sm flex flex-col gap-4 pointer-events-auto">
+      <div class="flex items-center gap-3 border-b-2 border-amber-450/30 pb-3">
+        <span class="text-3xl">⚠️</span>
+        <div>
+          <h2 class="font-mono text-xs font-black uppercase tracking-wider text-amber-450">Kamera Gagal Diakses</h2>
+          <p class="text-[10px] font-mono font-black uppercase text-slate-400">Camera Access Blocked</p>
+        </div>
+      </div>
+      
+      <p class="text-xs leading-relaxed text-slate-200">
+        Peramban tidak dapat mengakses kamera Anda. Hal ini biasanya disebabkan oleh izin kamera ditolak, Anda membukanya dalam peramban sandbox aplikasi, atau perangkat tidak memiliki kamera aktif.
+      </p>
+      
+      <p class="text-[11px] leading-relaxed text-slate-400 border-t border-slate-800/80 pt-2 font-medium">
+        The browser is unable to stream your camera. This typically occurs due to denied permissions, in-app sandbox restrictions, or lack of video devices.
+      </p>
+
+      <div class="grid grid-cols-2 gap-3 mt-2">
+        <button onclick="activateSimulationBypass()" class="py-2.5 px-3 bg-amber-400 hover:bg-amber-500 text-slate-950 font-mono text-[11px] font-black uppercase tracking-wider text-center rounded-sm transition-all shadow-[4px_4px_0_#ffffff] active:scale-95">
+          Mode Simulasi
+        </button>
+        <button onclick="window.location.reload()" class="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-white font-mono text-[11px] font-black uppercase tracking-wider text-center border-2 border-slate-700 rounded-sm transition-all active:scale-95">
+          Coba Lagi (Retry)
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

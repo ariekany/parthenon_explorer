@@ -1,0 +1,10 @@
+{
+  "name": "Jelajah AR Parthenon",
+  "description": "Aplikasi web interaktif untuk membandingkan masa kejayaan dan reruntuhan Parthenon dalam format WebGL dan WebAR",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
