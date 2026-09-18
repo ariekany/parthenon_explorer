@@ -1,5 +1,7 @@
 # 🏛️ Parthenon WebAR & 3D Interactive Hub
 
+deployed site link: https://parthenon-explorer.vercel.app/
+
 Aplikasi web interaktif berbasis **React**, **Vite**, dan **Tailwind CSS** untuk mengeksplorasi situs sejarah kuil **Parthenon** di Athena. Dilengkapi dengan simulasi rekonstruksi 3D interaktif dan teknologi **WebAR (Augmented Reality)** menggunakan pustaka **A-Frame** dan **AR.js**.
 
 ---
